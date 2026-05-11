@@ -250,7 +250,7 @@ class CombinFeatureGenerator(nn.Module):
         # Create a list of significance extraction modules for different feature levels
         self.SignE_List = nn.ModuleList([
             SignificanceExtraction(in_channels=ch, ifattention=self.ifAttention,
-                                   iftwoinput=self.ifTwoInput, outputM=self.outputM).cuda()
+                                   iftwoinput=self.ifTwoInput, outputM=self.outputM)
             for ch in channels
         ])
 
@@ -346,7 +346,7 @@ class CombinFeatureGenerator(nn.Module):
 
 class GANLoss(nn.Module):
     def __init__(self, use_lsgan=True, target_real_label=1.0, target_fake_label=0.0,
-                 tensor=torch.cuda.FloatTensor):
+                 tensor=torch.FloatTensor):
         super(GANLoss, self).__init__()
         self.real_label = target_real_label
         self.fake_label = target_fake_label
@@ -364,14 +364,14 @@ class GANLoss(nn.Module):
             create_label = ((self.real_label_var is None) or
                             (self.real_label_var.numel() != input.numel()))
             if create_label:
-                real_tensor = self.Tensor(input.size()).fill_(self.real_label)
+                real_tensor = torch.full_like(input, self.real_label)
                 self.real_label_var = Variable(real_tensor, requires_grad=False)
             target_tensor = self.real_label_var
         else:
             create_label = ((self.fake_label_var is None) or
                             (self.fake_label_var.numel() != input.numel()))
             if create_label:
-                fake_tensor = self.Tensor(input.size()).fill_(self.fake_label)
+                fake_tensor = torch.full_like(input, self.fake_label)
                 self.fake_label_var = Variable(fake_tensor, requires_grad=False)
             target_tensor = self.fake_label_var
         return target_tensor
