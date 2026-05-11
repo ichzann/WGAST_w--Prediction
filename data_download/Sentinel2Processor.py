@@ -13,7 +13,7 @@ class Sentinel2Processor:
         """
         # Initialize the Earth Engine module
         # ee.Authenticate()  # Uncomment if authentication is needed
-        ee.Initialize()
+        ee.Initialize(project='flawless-spirit-495715-b4')
 
         # Define the study area and date range
         self.aoi = ee.Geometry.Rectangle(bounds)
