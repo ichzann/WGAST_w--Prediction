@@ -287,10 +287,18 @@ the real WGAST(d+1) when a clear-sky d+1 is available for evaluation):
 
 | Split | Span | Purpose |
 |---|---|---|
-| Train | 2018-01 → 2023-12 | Fitting |
+| Train | 2017-10 → 2023-12 | Fitting |
 | Val | 2024-01 → 2024-06 | Early stopping, HP tuning |
 | Test (IID, time-held-out) | 2024-07 → today | Honest in-distribution number |
 | Test (OOD, city-held-out) | *v2* | One paper-ROI city never seen in train/val |
+
+**Earliest-date floor.** 2017-10 is the practical earliest start, bounded by
+Sentinel-2 surface-reflectance availability on GEE (`COPERNICUS/S2_SR_HARMONIZED`
+starts 2017-03-28; S2B operational from 2017-07-07, giving 5-day revisit). Going
+earlier means losing S2 indices entirely — a different (weaker) feature set —
+so 2017-10 leaves ~3 months of margin past the S2A+B revisit start. MODIS
+(2000-02) and Landsat 8 (2013-03) are never the binding constraint; DEM is static;
+Open-Meteo goes back to 1940.
 
 ---
 
@@ -312,7 +320,7 @@ Seven ROIs, all validated in the WGAST paper:
 
 Under the new design, **every clear-sky day where WGAST runs is one training row**
 (target = WGAST on that day), provided the preceding 5-day window contains at least
-one usable optical observation. Expected sample count over 2018-01 → 2024-12:
+one usable optical observation. Expected sample count over 2017-10 → 2024-12:
 **~700–900 rows** across the seven cities (same WGAST clear-sky budget — the change
 of target framing doesn't manufacture extra clear-sky days, it just removes the
 "d+1 also clear" pairing constraint, which in the previous design dropped a large
@@ -335,7 +343,7 @@ revisit:
 ```text
 for region R in ROIs:
     dem = load_dem(R)                                        # static, cached once
-    for d0 in clear_sky_days(R, 2018..2024):                 # supervised target dates
+    for d0 in clear_sky_days(R, 2017-10..2024-12):           # supervised target dates
         raster_target = WGAST(at d0) [cached]                # supervisory raster
 
         # Latest-WGAST input — most recent WGAST output strictly before d0
@@ -500,7 +508,7 @@ To-do list (v1)
   2. Smoke-test the existing WGAST checkpoint on ONE new city before committing to all of them. Your model was trained on Orléans alone — run it on, say, one Madrid date and visually check the output   
   looks like a plausible LST map. If it's clearly broken, you have to either retrain WGAST multi-city or grab the paper's released weights, and that decision changes the schedule. Don't skip this —
   discovering it after 800 inferences hurts.
-  3. For each city, run the existing pipeline end-to-end: data_download (01_…ipynb) → data_preparation (02_…ipynb) → data_structuring (03_…ipynb), covering 2018-01 → 2024-12. This produces the
+  3. For each city, run the existing pipeline end-to-end: data_download (01_…ipynb) → data_preparation (02_…ipynb) → data_structuring (03_…ipynb), covering 2017-10 → 2024-12. This produces the
   MODIS/Landsat/Sentinel triples per city.
   4. Run WGAST inference on every clear-sky date in every city; save each output raster to a per-city cache directory (~1600 rasters total, ~6 GB).
 
