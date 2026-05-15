@@ -27,7 +27,7 @@ class GetTriple:
 
         for date in formatted_dates:
             # Construct the expected filename pattern
-            filename_pattern = f"{date}*_T31UDP.tif"
+            filename_pattern = f"{date}*.tif"
             matching_file = [f for f in os.listdir(path) if fnmatch.fnmatch(f, filename_pattern)][0]
             file_path = os.path.join(path, matching_file)
 
@@ -52,8 +52,12 @@ class GetTriple:
         formatted_dates = common_dates.apply(lambda x: pd.to_datetime(x).strftime('%Y%m%d')).tolist()
 
         for date in formatted_dates:
-            filename_pattern = f"LC08_199027_{date}.tif"
-            file_path = os.path.join(path, filename_pattern)
+            filename_pattern = f"LC08_*_{date}.tif"
+            
+            matches = [f for f in os.listdir(path) if fnmatch.fnmatch(f, filename_pattern)]
+            if not matches:
+                continue
+            file_path = os.path.join(path, matches[0])
               
             if os.path.exists(file_path):
                 print(f"Reading Landsat file: {file_path}")
