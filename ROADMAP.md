@@ -67,14 +67,18 @@ follows the code (`model/WGAST.py::CombinFeatureGenerator.forward`,
 
 | Input idx | Source              | Resolution | Bands fed into net      | Role                              |
 |-----------|---------------------|-----------:|-------------------------|-----------------------------------|
-| `inputs[0]` | Terra MODIS @ t₂  | 1 km       | 1 (LST)                 | Coarse LST at the **target** date |
+| `inputs[0]` | Terra MODIS @ t₂  | 1 km       | 1 (LST)                 | Coarse LST at the **target** date — the *only* input required on the prediction day |
 | `inputs[1]` | Landsat 8 @ t₀    | 30 m       | 4 (LST + 3 indices)     | Reference high-spatial LST + spectral indices at a **past** date |
-| `inputs[2]` | Sentinel-2 @ t₂   | 10 m       | 3 (indices)             | Fine-spatial spectral context at the **target** date |
+| `inputs[2]` | Sentinel-2 @ t₀   | 10 m       | 3 (indices)             | Fine-spatial spectral context at the **same past** reference date |
 | `inputs[3]` | Terra MODIS @ t₀  | 1 km       | 1 (LST)                 | Coarse LST at the reference date  |
 
-`t₀` is the previous Landsat-available reference date; `t₂` is the inference target day.
-By design the model never needs a *future* observation — making it real-time-friendly
-for day-0.
+`t₀` is a single **past clear-sky reference date** on which Sentinel-2, Landsat 8,
+and MODIS were *all* simultaneously clear over the AOI — it bundles all three
+optical/thermal observations into one snapshot of the scene. `t₂` is the inference
+target day, on which only MODIS LST is required. The gap `t₂ − t₀` can be days to
+weeks; WGAST treats `t₀` as a stable scene reference that does not need to be
+refreshed daily. By design the model never needs a *future* observation — making
+it real-time-friendly for day-0.
 
 ### 2.2 Output
 
@@ -187,7 +191,7 @@ and any downstream sanity-checks on the same provider.
 The **real WGAST raster on the target day d0**:
 
 ```text
-y = WGAST(MODIS_{d0}, Landsat_{t0}, Sentinel_{d0}, MODIS_{t0})  ∈  ℝ^{H × W}
+y = WGAST(MODIS_{d0}, Landsat_{t0}, Sentinel_{t0}, MODIS_{t0})  ∈  ℝ^{H × W}
 ```
 
 Available only for clear-sky d0. Each such day in our pipeline becomes one training
@@ -387,7 +391,7 @@ optional GRU branch can be added without re-fetching from Open-Meteo.
 
 - **Training framing**: target = WGAST raster on day d0; features = 5-day window
   d-5..d-1 of optical+weather **plus** the latest WGAST raster strictly before d0
-  (could be d-1 or older, with an `age_days_lst` scalar telling the model how stale).
+
 - **Inference framing**: shift the window to d-4..d0 and predict d+1; the latest-
   WGAST slot is filled by WGAST(d0). Same trained network; the +1 offset between
   "last feature day" and "predicted day" is identical to training.
@@ -428,11 +432,6 @@ optional GRU branch can be added without re-fetching from Open-Meteo.
 1. **Window length** — fixed at 5 days for v1. Revisit if val performance is
    bottlenecked by stale optical inputs (shorten to 3) or by data scarcity
    (lengthen to 7).
-1b. **`age_days_lst` distribution** — once `build_dataset.py` runs, plot the
-   histogram. If most samples have very-old LST inputs (e.g. weeks), consider
-   capping (drop samples where age > N) so the model isn't dominated by a stale-
-   input regime that will never occur at inference. At inference age_lst is
-   almost always 0.
 2. **Tile size for training augmentation** — `128²` vs. `256²`. Pick after the
    first cache is built; depends on actual per-city raster dimensions.
 3. **U-Net depth & channel widths** — start small (4 down/up blocks, channels
