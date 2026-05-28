@@ -16,13 +16,14 @@ satellite observations). This project adds a **secondary ML model** that answers
 
 The secondary model is trained as a **WGAST surrogate over a past window**: given the
 non-LST features WGAST sees (Sentinel-2 and Landsat indices) plus DEM and weather, all
-collected over the **5 days preceding** a target day, it predicts the WGAST raster for
-that target day. The raster itself is never a feature — only the past-window
-non-LST signal.
+collected over the **10 days preceding** a target day, plus every past WGAST output
+that falls inside that window (one channel slot per window day, empty slots zeroed
+and flagged by a per-slot mask), it predicts the WGAST raster for that target day.
+WGAST(d0) itself is never a feature — only its past values inside the window.
 
 ```text
-TRAINING     features over d-5..d-1  ──►  WGAST raster on day d0
-INFERENCE    features over d-4..d0   ──►  predicted WGAST raster on day d+1
+TRAINING     features over d-10..d-1  ──►  WGAST raster on day d0
+INFERENCE    features over  d-9..d0   ──►  predicted WGAST raster on day d+1
 ```
 
 The **window-shift trick** is the core idea: at training time the last feature day
@@ -120,57 +121,72 @@ in v1 (see §4.2).
 
 Each training sample = `(region, date d0)` where d0 is a clear-sky day (so we have
 a real WGAST(d0) as the supervisory target). All features come from the
-**5-day window d-5..d-1** preceding d0 — d0 itself is never observed at training
-time. At inference the window is shifted to d-4..d0 and the model produces the
+**10-day window d-10..d-1** preceding d0 — d0 itself is never observed at training
+time. At inference the window is shifted to d-9..d0 and the model produces the
 prediction for d+1.
 
-**Spatial inputs** (stacked into the U-Net encoder along the channel dimension):
+**Spatial inputs** (stacked into the U-Net encoder along the channel dimension).
+The window has 10 day-slots; each slot carries the same channel set whether or
+not data exists for that day. Empty slots are zero-filled and flagged by their
+mask channel — recency is encoded by slot position (the d-1 slot always sits in
+the same place), so the model knows how stale each piece of data is from where
+it sits in the stack.
 
-- **Per-day optical indices**, for each of the 5 days in the window:
-  - Sentinel-2 indices at 10 m (3 bands, as in WGAST).
-  - Landsat indices at 30 m (3 bands, the non-LST ones from WGAST — Landsat is
-    upsampled to the Sentinel-2 grid).
-  - **Per-day cloud-mask channel** (1 = valid pixel, 0 = masked). Cloudy pixels
-    in the band channels are set to 0; the mask channel tells the model which
-    pixels are real.
-- **Latest available WGAST raster strictly before d0** (1 channel, 10 m). This is
-  the *most recent* WGAST output on any clear-sky day ≤ d-1 — could be d-1 itself,
-  could be d-7 if the window had no further clear days. **Provides the LST signal
-  to the model.** At inference this slot is filled by WGAST(d0), which is fresh
-  by construction (we only run inference on clear d0). The model thus learns to
-  use a possibly-stale LST snapshot at training time and gets the easy case at
-  inference — robustness comes for free.
+- **Per-day optical indices**, for each of the 10 days in the window:
+  - Sentinel-2 indices at 10 m (3 bands, same as WGAST). S2 revisit is ~5 days,
+    so typically 1–2 acquisitions per window — the rest of the slots are zero.
+  - Landsat indices at 30 m (3 bands, the non-LST ones from WGAST — upsampled
+    to the Sentinel-2 grid). Landsat 8 revisit is 16 days, so typically 0–1
+    acquisitions per window.
+  - **Per-day optical mask channel** (1 = valid pixel, 0 = cloudy or no
+    acquisition). Cloudy/missing pixels in the band channels are zeroed; the
+    mask channel tells the model which pixels are real.
+- **Per-day past-WGAST raster + mask**, for each of the 10 days in the window:
+  - **WGAST channel** (1 channel, 10 m): the WGAST output for that day if a
+    clear-sky WGAST output exists, else zeros.
+  - **WGAST mask channel** (1 channel, 10 m): 1 if a WGAST output is present
+    on that day, 0 otherwise.
+  - At inference the window shifts by +1 and the d0 slot is filled by the
+    fresh WGAST(d0). So the most-recent slot is "stale by k days" at training
+    (k = days since the last clear-sky WGAST) but always fresh at inference;
+    the model learns both regimes by construction.
 - **DEM** (digital elevation model, static per region, 1 channel at the Sentinel
   grid). Carries intra-city elevation variation — the very feature that produces
   spatial LST contrasts between hills, valleys, and built-up flats.
 
-Channel count for the spatial branch: 5 days × (3 S2 + 3 LS + 1 mask) + 1 WGAST
-LST + 1 DEM = **37 channels** at the encoder input (subject to revision when
-bands are finalised in code).
+Channel count for the spatial branch: 10 days × (3 S2 + 3 LS + 1 optical mask
++ 1 WGAST + 1 WGAST mask) + 1 DEM = **91 channels** at the encoder input
+(subject to revision when bands are finalised in code).
 
 **Scalar inputs** (enter the bottleneck via a small MLP):
 
-- **Daily-aggregated weather** for each of d-5..d-1: air temperature (mean/max/min),
-  dew point, relative humidity, wind speed, surface pressure, cloud cover,
-  precipitation. ~7 vars × 5 days ≈ **35 scalars**. Source: Open-Meteo Archive.
+- **Daily-aggregated weather** for each of d-10..d-1: T_max, T_min, T_mean,
+  dew point, RH, shortwave radiation, cloud cover, wind speed, precipitation,
+  ET₀, surface pressure, sunshine duration. **12 vars × 10 days = 120 scalars**.
+  Source: Open-Meteo Archive (`get_Opene_Meteo.py::DEFAULT_DAILY_VARS`).
 - **Seasonal phase of the target day**: `sin(2π·doy_d0/365)`, `cos(2π·doy_d0/365)`.
 - **Elevation scalar** (single scalar per city, at the representative point) —
   kept in addition to the DEM channel because it provides a region-level adiabatic
   offset to the bottleneck even if the encoder under-uses the DEM channel.
-- **`age_days_lst`**: how many days old the latest-WGAST input channel is, relative
-  to the target day. 0 if WGAST was available on d-1 itself (or on d0 at inference).
-  Tells the model when to discount the LST channel.
 - **Optional forecast for the target day** (forecast issued on d-1 for d0 at
   train time; forecast issued on d0 for d+1 at inference): forecast T_max, cloud
   cover, wind, humidity. ~4 scalars. Include if Open-Meteo coverage permits.
 
-**N=1 cloud filter.** A sample is kept iff **at least one day in the window has a
-usable optical observation** (any of Sentinel-2 / Landsat). In practice this filter
-almost never bites — but it guarantees the spatial branch has *some* real signal
-to work with rather than 5 all-cloudy days. Days within a kept sample that are
-cloudy contribute zeros + the mask channel; the model learns to lean on the days
-that are clear. Channel order encodes recency (channels for d-1 always sit in the
-same slot), so no separate `age_days` scalar is needed.
+Note: `age_days_lst` is no longer carried as a separate scalar — WGAST recency
+is now encoded by per-slot position + mask, same as the optical channels.
+
+**N=1 filters.** A sample is kept iff **both**:
+
+1. **At least one day in the window has a usable optical observation** (any of
+   Sentinel-2 / Landsat with non-trivial mask), AND
+2. **At least one day in the window has a WGAST output** (i.e. there is some
+   past-WGAST signal in the 10-slot history).
+
+The first guarantees the optical branch has *some* real signal. The second
+preserves the persistence-raster baseline (it needs something to persist) and
+keeps the training distribution aligned with inference, where the d0 slot is
+always populated. Empty slots in kept samples contribute zeros + the mask
+channel; the model learns to lean on the days that are populated.
 
 **Explicitly excluded** (so generalisation is by design, not by label):
 
@@ -178,10 +194,10 @@ same slot), so no separate `age_days` scalar is needed.
 - ❌ climate zone
 - ❌ latitude / longitude
 - ❌ **MODIS / Landsat raw LST**. The LST signal enters the model only through
-  WGAST's own previous output (the latest-WGAST channel above). We deliberately do
-  not give the model the raw coarse satellite LST that WGAST itself ingests —
-  feeding WGAST(d-1) is cleaner, already at 10 m, and matches what's actually
-  available in production. MODIS therefore drops out of the input set entirely.
+  WGAST's own previous outputs (the per-day WGAST channels above). We deliberately
+  do not give the model the raw coarse satellite LST that WGAST itself ingests —
+  WGAST history is cleaner, already at 10 m, and matches what's actually available
+  in production. MODIS therefore drops out of the input set entirely.
 
 All weather/forecast features come from **Open-Meteo** to keep observations, forecasts,
 and any downstream sanity-checks on the same provider.
@@ -204,10 +220,10 @@ row. At inference the same trained network is queried with the window shifted by
                                                                          predicted
   spatial stack                                                          WGAST(d0)
   ─────────────                                                          ─────────
-  • 5×(S2 indices + LS indices + cloud mask)                                 ▲
-  • latest-WGAST raster (≤ d-1 at train, = d0 at infer)                      │
+  • 10×(S2 indices + LS indices + optical mask)                              ▲
+  • 10×(past WGAST + WGAST mask)                                             │
   • DEM                                                                      │
-  ≈ 37 channels @ H×W                                                        │
+  ≈ 91 channels @ H×W                                                        │
         │                                                                    │
         ▼                                                                    │
   U-Net encoder ──┬──── bottleneck embedding ─────────────► U-Net decoder ──┘
@@ -220,10 +236,9 @@ row. At inference the same trained network is queried with the window shifted by
                                                 │
   scalar inputs                                 │
   ─────────────                                 │
-  • 5×7 daily weather  ≈ 35 vals                │
+  • 10×12 daily weather  = 120 vals             │
   • sin/cos(doy_d0)                             │
   • elevation scalar                 small MLP ─┘
-  • age_days_lst                  (~32-dim out)
   • forecast(d0) scalars (optional)
 ```
 
@@ -256,14 +271,14 @@ which is exactly what `runner/experiment.py:test()` already does for WGAST).
 The model earns its place by beating these:
 
 1. **Persistence-raster**: `predicted(d0) = WGAST(d_prev)`, where `d_prev` is the
-   most recent clear-sky WGAST output strictly before d0 — i.e., exactly the
-   latest-WGAST channel that the model itself receives as input. The "no model"
-   floor. Trivially strong on stable weather. At inference for d+1 this becomes
-   `predicted(d+1) = WGAST(d0)`.
+   most recent clear-sky WGAST output strictly before d0 — equivalent to taking
+   the most-recent populated slot of the model's own per-day WGAST history. The
+   "no model" floor. Trivially strong on stable weather. At inference for d+1
+   this becomes `predicted(d+1) = WGAST(d0)`.
 2. **Weather-only U-Net**: identical architecture, but **all optical channels
-   AND the latest-WGAST channel** are zeroed (DEM kept). Isolates exactly what
-   the spatial inputs (optical stack + WGAST LST) contribute on top of weather
-   + DEM + season alone.
+   AND all per-day WGAST channels (and their masks)** are zeroed (DEM kept).
+   Isolates exactly what the spatial inputs (optical stack + WGAST history)
+   contribute on top of weather + DEM + season alone.
 
 The metric of interest is skill vs. baseline #1 (does the model do anything?) and
 skill vs. baseline #2 (does the visual + DEM stack contribute, or is it all in the
@@ -350,28 +365,24 @@ for region R in ROIs:
     for d0 in clear_sky_days(R, 2017-10..2024-12):           # supervised target dates
         raster_target = WGAST(at d0) [cached]                # supervisory raster
 
-        # Latest-WGAST input — most recent WGAST output strictly before d0
-        d_prev   = most_recent_wgast_date_before(R, d0)
-        if d_prev is None: continue                          # no prior WGAST → drop
-        raster_lst_in = WGAST(at d_prev) [cached]
-        age_lst       = (d0 - d_prev).days                   # scalar conditioning
-
-        # Past 5-day window of optical + weather
+        # Past 10-day window: optical + weather + per-day past WGAST
         window = []
-        for k in 1..5:
-            d_k = d0 - k days
-            s2  = fetch_sentinel_indices(R, d_k)             # may be cloudy → mask
-            ls  = fetch_landsat_indices (R, d_k)             # may be missing
-            cm  = build_cloud_mask(s2, ls)                   # per-day mask
-            wx  = open_meteo.archive(R.point, d_k)           # daily aggregates
-            window.append({s2, ls, cm, wx})
+        for k in 1..10:
+            d_k     = d0 - k days
+            s2      = fetch_sentinel_indices(R, d_k)         # may be cloudy → mask
+            ls      = fetch_landsat_indices (R, d_k)         # may be missing
+            opt_msk = build_optical_mask(s2, ls)             # per-day optical mask
+            wgast_k = wgast_cache.get(R, d_k)                # None if no WGAST that day
+            wg_msk  = 1 if wgast_k is not None else 0        # per-day WGAST mask
+            wx      = open_meteo.archive(R.point, d_k)       # daily aggregates
+            window.append({s2, ls, opt_msk, wgast_k, wg_msk, wx})
 
-        # N=1 filter
+        # N=1 filters (BOTH must hold)
         if not any_day_has_usable_optical(window): continue
+        if not any_day_has_wgast(window):           continue
 
         fcst_d0 = open_meteo.forecast_archive(R.point, d0 - 1d, lead=1)  # optional
-        write_sample(R, d0, raster_target, raster_lst_in, age_lst,
-                     window, dem, fcst_d0)
+        write_sample(R, d0, raster_target, window, dem, fcst_d0)
 ```
 
 WGAST runs **offline once** per `(R, date)` and writes a 10 m TIF to a cache
@@ -389,12 +400,13 @@ optional GRU branch can be added without re-fetching from Open-Meteo.
 
 ### 5.1 Decided
 
-- **Training framing**: target = WGAST raster on day d0; features = 5-day window
-  d-5..d-1 of optical+weather **plus** the latest WGAST raster strictly before d0
+- **Training framing**: target = WGAST raster on day d0; features = 10-day window
+  d-10..d-1 of optical+weather **plus** per-day past-WGAST channels (one WGAST
+  raster + WGAST mask slot per window day; empty slots zeroed).
 
-- **Inference framing**: shift the window to d-4..d0 and predict d+1; the latest-
-  WGAST slot is filled by WGAST(d0). Same trained network; the +1 offset between
-  "last feature day" and "predicted day" is identical to training.
+- **Inference framing**: shift the window to d-9..d0 and predict d+1; the d0
+  WGAST slot is filled by fresh WGAST(d0). Same trained network; the +1 offset
+  between "last feature day" and "predicted day" is identical to training.
 - **Single horizon: h = +1 day.**
 - **Use case: day-ahead urban-heat-island warning** at 10 m resolution.
 - **Region scale = WGAST training scale** (city-sized polygon).
@@ -403,40 +415,40 @@ optional GRU branch can be added without re-fetching from Open-Meteo.
 - **No identity / location labels in features** — city_id, climate_zone, lat, lon
   excluded by design. **Elevation IS included**, both as a static DEM channel in
   the spatial branch and as a region-level scalar in the conditioning MLP.
-- **LST signal enters only via WGAST's own previous output** (the latest-WGAST
-  channel). Raw MODIS LST and Landsat LST are not fed to the model. MODIS drops
-  out of the input set entirely (it contributed only LST in WGAST).
+- **LST signal enters only via WGAST's own previous outputs** (the per-day
+  WGAST channels in the 10-slot history). Raw MODIS LST and Landsat LST are not
+  fed to the model. MODIS drops out of the input set entirely (it contributed
+  only LST in WGAST).
 - **Weather / forecast / observations source = Open-Meteo** (Archive + historical-
   forecast endpoints).
 - **v1 architecture = conditional U-Net** (sequence-as-channels spatial branch,
   scalar conditioning concat at bottleneck), ~0.5–2 M params.
-- **Cloud handling = strategy N=1 + per-day mask channel.** Sample is kept iff at
-  least one day in the window has any usable optical observation. Cloudy pixels
-  are zeroed in the band channels; a per-day binary mask channel tells the model
-  which pixels are valid. Channel order encodes recency — no separate `age_days`
-  scalar for the optical window (`age_days_lst` is a separate scalar for the
-  latest-WGAST channel only).
+- **Cloud / data-availability handling = two N=1 filters + per-slot mask channels.**
+  Sample is kept iff (a) at least one day in the 10-day window has a usable
+  optical observation, AND (b) at least one day in the window has a WGAST output.
+  Cloudy/missing pixels are zeroed in the band channels; a per-day optical mask
+  channel and a per-day WGAST mask channel tell the model which slots are real.
+  Slot order encodes recency, so no separate `age_days` scalar is carried —
+  `age_days_lst` has been removed (it was redundant with the slotted history).
 - **Loss = L1 + λ·(1 − SSIM), λ ≈ 0.1.**
 - **GRU / hourly-weather temporal branch deferred to v3.**
 - **Tile-based training augmentation** (random crops with the same coordinates
   across all temporal channels), full raster at inference.
-- **Baselines** = persistence-raster (most recent WGAST output strictly before the
-  target day — same thing the model receives in its latest-WGAST channel) +
-  weather-only U-Net (optical channels AND latest-WGAST channel zeroed, DEM kept).
+- **Baselines** = persistence-raster (most recent WGAST output strictly before
+  the target day — equivalent to the most-recent populated slot of the model's
+  per-day WGAST history) + weather-only U-Net (optical channels AND all per-day
+  WGAST channels zeroed, DEM kept).
 - **Metrics** = RMSE / MAE / Bias / PSNR / SSIM on the raster vs. real WGAST(d0).
   Optional summary-stat sanity check vs. observed T_max.
 - **Splits = time-based** (IID test on last months); OOD city in v2.
 
 ### 5.2 Still open
 
-1. **Window length** — fixed at 5 days for v1. Revisit if val performance is
-   bottlenecked by stale optical inputs (shorten to 3) or by data scarcity
-   (lengthen to 7).
-2. **Tile size for training augmentation** — `128²` vs. `256²`. Pick after the
+1. **Tile size for training augmentation** — `128²` vs. `256²`. Pick after the
    first cache is built; depends on actual per-city raster dimensions.
-3. **U-Net depth & channel widths** — start small (4 down/up blocks, channels
+2. **U-Net depth & channel widths** — start small (4 down/up blocks, channels
    `[16, 32, 64, 128, 256]` like WGAST). Tune if val L1 plateaus high.
-4. **Forecast-for-target-day scalar** — include if Open-Meteo's historical-forecast
+3. **Forecast-for-target-day scalar** — include if Open-Meteo's historical-forecast
    coverage is reliable across all seven cities; otherwise drop in v1.
 
 ---
@@ -447,7 +459,7 @@ A documented upgrade lane so the multi-head idea isn't lost:
 
 | Version | Data scale | Model | What's new |
 |---|---|---|---|
-| **v1** (now) | ~700–900 supervised rasters, 7 cities | Conditional U-Net, sequence-as-channels spatial branch (5-day window of S2/LS indices + per-day cloud mask + latest-WGAST LST channel + DEM) + scalar conditioning | distillation framing, window-shift trick, DEM channel folded in, LST signal via WGAST's own previous output |
+| **v1** (now) | ~700–900 supervised rasters, 7 cities | Conditional U-Net, sequence-as-channels spatial branch (10-day window of S2/LS indices + per-day optical mask + per-day past WGAST + per-day WGAST mask + DEM) + scalar conditioning | distillation framing, window-shift trick, DEM channel folded in, LST signal via per-day WGAST history |
 | **v2** | same data + held-out city | same model | OOD city evaluation; possibly FiLM conditioning if scalar fusion is bottlenecking |
 | **v3** | ~5 k+ pairs (more years, denser S2 era, possibly more ROIs) | Adds a **ConvLSTM / temporal-attention branch** over the per-day optical stack, and a **GRU branch over hourly weather** feeding the bottleneck | temporal-aware architecture only pays off once the dataset supports it |
 
@@ -513,8 +525,8 @@ To-do list (v1)
 
   Pipeline code (the new prediction/ package)
   5. Write prediction/weather_fetcher.py — Open-Meteo client (archive + historical-forecast endpoints). Smallest, most testable piece; build it first.
-  6. Write prediction/build_dataset.py — for each clear-sky day d0 in the WGAST cache, assemble the 5-day window d-5..d-1 (per-day Sentinel-2 + Landsat indices with a per-day cloud mask, daily-aggregated Open-Meteo weather), look up the most recent WGAST output strictly before d0 (record its date and age_days_lst), and (optionally) the forecast for d0 issued on d-1. Apply the N=1 filter and drop samples with no prior WGAST raster at all. Write one parquet row per kept d0 pointing at the target raster, the latest-WGAST raster, and the windowed optical stack on disk.
-  7. Write prediction/dataset.py — PyTorch Dataset that yields (spatial_stack, scalar_conditioning, target_raster) triples. spatial_stack = (5 × (S2+LS+mask) + latest-WGAST + DEM) channels at H×W. Random tile cropping at train-time (same coords across all spatial channels), full-raster at val/test-time.
+  6. Write prediction/build_dataset.py — for each clear-sky day d0 in the WGAST cache, assemble the 10-day window d-10..d-1: per-day Sentinel-2 + Landsat indices with a per-day optical mask, per-day past WGAST raster + WGAST mask (zero-filled if no WGAST output that day), daily-aggregated Open-Meteo weather, and (optionally) the forecast for d0 issued on d-1. Apply both N=1 filters (drop if no usable optical day in the window OR if no past WGAST anywhere in the window). Write one parquet row per kept d0 pointing at the target raster and the full windowed stack on disk.
+  7. Write prediction/dataset.py — PyTorch Dataset that yields (spatial_stack, scalar_conditioning, target_raster) triples. spatial_stack = (10 × (S2 + LS + optical_mask + WGAST + WGAST_mask) + DEM) = 91 channels at H×W. Random tile cropping at train-time (same coords across all spatial channels), full-raster at val/test-time.
 
   Model & training
   8. Write prediction/model_unet.py (conditional U-Net) and prediction/losses.py (L1 + 0.1·(1−SSIM)).
