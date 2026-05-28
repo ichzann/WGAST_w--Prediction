@@ -1,1 +1,13 @@
 *.tif
+
+# OS / editor junk
+.DS_Store
+__pycache__/
+*.pyc
+
+# Open-Meteo + other HTTP request caches
+.cache/
+
+# Regeneratable secondary-model data (rebuild from notebooks anytime)
+tutorials/data/secondary/raw/
+tutorials/data/secondary/wgast_cache/
