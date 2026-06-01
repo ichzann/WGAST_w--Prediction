@@ -1,13 +1,28 @@
-*.tif
-
 # OS / editor junk
 .DS_Store
 __pycache__/
 *.pyc
+.ipynb_checkpoints/
 
 # Open-Meteo + other HTTP request caches
 .cache/
 
-# Regeneratable secondary-model data (rebuild from notebooks anytime)
+# Large binary data / model artifacts — never commit
+*.tif
+*.tiff
+*.npz
+*.npy
+*.pth
+*.pt
+*.ckpt
+*.h5
+
+# Data directories (all rebuildable from notebooks / downloads)
+tutorials/data/raw/
+tutorials/data/wgast/
 tutorials/data/secondary/raw/
 tutorials/data/secondary/wgast_cache/
+tutorials/data/secondary/samples_istanbul/
+
+# Keep small parquet manifests
+!tutorials/data/secondary/*.parquet
