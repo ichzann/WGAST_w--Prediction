@@ -218,7 +218,7 @@ urban heat islands, built on top of WGAST.
 
 I used AI (Anthropic's Claude) **throughout this project**, mainly for the
 **coding** and for **designing the secondary model's architecture**. The research
-direction, goals, experiments, and all decisions are mine; the AI was a tool.
+direction, goals, and all decisions are mine.
 
 ---
 
