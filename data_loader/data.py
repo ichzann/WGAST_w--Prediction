@@ -139,6 +139,10 @@ class PatchSet(Dataset):
         self.transform = im2tensor
         self.transform_mask = im2tensor_mask
 
+        # Load every image pair into memory once; __getitem__ slices patches
+        # from these arrays instead of re-reading the files for each patch.
+        self.image_mask_cache = [load_image_and_mask_pair(d) for d in self.image_dirs]
+
     def map_index(self, index):
         id_n = index // (self.num_patches_x * self.num_patches_y)
         residual = index % (self.num_patches_x * self.num_patches_y)
@@ -150,7 +154,7 @@ class PatchSet(Dataset):
     def __getitem__(self, index):
         id_n, id_x, id_y = self.map_index(index)
         
-        images, masks = load_image_and_mask_pair(self.image_dirs[id_n])
+        images, masks = self.image_mask_cache[id_n]
 
         image_patches = [None] * len(images)
         mask_patches = [None] * len(masks)
@@ -179,12 +183,6 @@ class PatchSet(Dataset):
                 id_x * scale:(id_x + self.patch_size[0]) * scale,
                 id_y * scale:(id_y + self.patch_size[1]) * scale]
             mask_patches[i] = self.transform_mask(mask)
-
-        # Clean up memory
-        del images[:]
-        del masks[:]
-        del images
-        del masks
 
         return image_patches, mask_patches
 

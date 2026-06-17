@@ -22,7 +22,15 @@ tutorials/data/raw/
 tutorials/data/wgast/
 tutorials/data/secondary/raw/
 tutorials/data/secondary/wgast_cache/
-tutorials/data/secondary/samples_istanbul/
+tutorials/data/secondary/samples_*/
+tutorials/data/secondary/ckpt/
 
 # Keep small parquet manifests
 !tutorials/data/secondary/*.parquet
+
+# Internal planning doc — not for the public repo
+ROADMAP.md
+
+# Scratch / exploration files
+tutorials/job1.py
+tutorials/wgast_quicklook.ipynb

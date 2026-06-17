@@ -6,14 +6,19 @@ from torch.utils.data import Dataset
 
 
 class WGASTSurrogateDataset(Dataset):
-    def __init__(self, manifest_path, tile_size=None):
-        self.manifest = pd.read_parquet(manifest_path).reset_index(drop=True)
+    def __init__(self, manifest_path, tile_size=None, split=None):
+        self.manifest = pd.read_parquet(manifest_path)
+        if split is not None:
+            if "split" not in self.manifest.columns:
+                raise ValueError("manifest has no 'split' column -- rebuild with 03s_build_dataset.ipynb")
+            self.manifest = self.manifest[self.manifest["split"] == split]
+        self.manifest = self.manifest.reset_index(drop=True)
         self.tile_size = tile_size
 
         stats_path = Path(manifest_path).parent / "stats.npz"
         if not stats_path.exists():
             raise FileNotFoundError(
-                f"{stats_path} not found. Run build_dataset.fit_stats(manifest) first."
+                f"{stats_path} not found. Run 03s_build_dataset.ipynb first (it writes stats.npz)."
             )
         s = np.load(stats_path)
         self.sp_mean = s["spatial_mean"][:, None, None].astype(np.float32)
@@ -29,7 +34,10 @@ class WGASTSurrogateDataset(Dataset):
     def __getitem__(self, idx):
         row = self.manifest.iloc[idx]
         d = np.load(row["path"])
-        spatial = (d["spatial"] - self.sp_mean) / self.sp_std
+        # z-score valid pixels only; missing (zero-filled) pixels stay exactly 0
+        # so the mask channels remain the sole "is this real?" signal (§10 H2).
+        raw = d["spatial"]
+        spatial = np.where(raw != 0, (raw - self.sp_mean) / self.sp_std, 0.0).astype(np.float32)
         scalars = (d["scalars"] - self.sc_mean) / self.sc_std
         target  = (d["target"]  - self.tg_mean) / self.tg_std
 

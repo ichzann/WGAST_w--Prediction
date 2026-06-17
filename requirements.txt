@@ -1,0 +1,23 @@
+# Core
+torch
+numpy
+pandas
+scipy
+matplotlib
+tqdm
+
+# Geospatial / Earth Engine
+rasterio
+earthengine-api
+geemap
+
+# Open-Meteo weather data (get_Opene_Meteo.py)
+openmeteo-requests
+requests-cache
+retry-requests
+
+# Parquet support for pandas (manifest/weather files)
+pyarrow
+
+# Running the tutorial notebooks
+jupyter

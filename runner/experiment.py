@@ -367,7 +367,7 @@ class Experiment(object):
 
         # Create data loaders for training and 
         train_loader = DataLoader(train_set, batch_size= batch_size, shuffle=True,
-                                num_workers=1, drop_last=True)
+                                num_workers=num_workers, drop_last=True)
         
         print("There are", len(train_set), "samples for training.")  # Log dataset size
 

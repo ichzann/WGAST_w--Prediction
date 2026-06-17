@@ -1,123 +1,257 @@
-<h1 align="center">  WGAST: Weakly-Supervised Generative Network for Daily 10 m Land Surface Temperature Estimation via Spatio-Temporal Fusion </h1>
+<h1 align="center">WGAST Day-Ahead LST Forecaster</h1>
+<p align="center"><em>A secondary model that imitates WGAST to predict 10&nbsp;m Land Surface Temperature one day ahead.</em></p>
 
 <div align="center">
-<a href="https://arxiv.org/abs/2508.06485" target="_blank"><img src=https://img.shields.io/badge/Paper-arXiv-b5212f.svg?logo=arxiv></a>
+<a href="https://arxiv.org/abs/2508.06485" target="_blank"><img src=https://img.shields.io/badge/Original%20WGAST-arXiv-b5212f.svg?logo=arxiv></a>
+<a href="https://github.com/Sofianebouaziz1/WGAST" target="_blank"><img src=https://img.shields.io/badge/Original%20WGAST-GitHub-181717.svg?logo=github></a>
 </div>
 
-<div align="center" style="margin-top: 30px;">
-<img src="./images/WGAST_visualization.png" width="100%"/>
-</div>
+> **This is a research / hobby fork, not the official WGAST.** All credit for the
+> WGAST model, method, and results belongs to its original authors (see
+> [Attribution](#attribution--original-wgast)). What *I* added here is a small
+> **secondary model** that learns to mimic WGAST so it can make a **one-day-ahead**
+> prediction. For the canonical WGAST, always use the
+> [original repository](https://github.com/Sofianebouaziz1/WGAST) and
+> [paper](https://arxiv.org/abs/2508.06485).
 
-## Description
+---
 
-<img src="./images/WGAST_generator.jpg" width="50%" align="right"/>
-<div style="text-align: justify;">
-<strong>WGAST</strong> (Weakly-Supervised Generative Network for Daily 10 m Land Surface Temperature Estimation via Spatio-Temporal Fusion) is a novel deep learning framework for spatio-temporal fusion of satellite images to estimate Land Surface Temperature (LST) at 10 m resolution on a daily basis. WGAST addresses the trade-off between spatial and temporal resolution in remote sensing by combining observations from Terra MODIS, Landsat 8, and Sentinel-2. It is built on a conditional generative adversarial architecture and integrates multi-level feature extraction, cosine similarity, normalization, temporal attention mechanisms, and noise suppression within an end-to-end design. WGAST is trained using a weakly-supervised strategy based on physical principles and adversarial learning, and demonstrates strong performance in recovering high-resolution thermal patterns, improving accuracy and robustness over existing methods.
-</div>
+## Attribution — original WGAST
 
-[**Features**](#Features)
-| [**Tutorials**](https://github.com/Sofianebouaziz1/WGAST/tree/main/tutorials)
-| [**Structure**](#Code-structure)
-| [**ArXiv**](https://arxiv.org/abs/2508.06485)
-| [**How to cite us ?**](#How-to-cite)
+**WGAST** — *Weakly-Supervised Generative Network for Daily 10&nbsp;m Land Surface
+Temperature Estimation via Spatio-Temporal Fusion* — was developed by
+**Sofiane Bouaziz, Adel Hafiane, Raphaël Canals, and Rachid Nedjai**
+([arXiv:2508.06485](https://arxiv.org/abs/2508.06485)).
 
+WGAST is a conditional-GAN that fuses Terra MODIS (1&nbsp;km), Landsat&nbsp;8
+(30&nbsp;m), and Sentinel-2 (10&nbsp;m) into a daily **10&nbsp;m Land Surface
+Temperature (LST)** map, trained with weak supervision against 30&nbsp;m
+Landsat-derived LST. This repository started as a fork of their code.
 
-## Features
+**Two honest caveats about the WGAST used here:**
 
-WGAST framework offers the following features:
-* A novel non-linear generative model specifically tailored for STF of LST, enabling accurate daily estimation at 10 m resolution by integrating coarse 1 km Terra MODIS data with complementary spectral information from multiple satellite RS platforms.
-* An effective use of Landsat 8 as an intermediate-resolution bridge, overcoming the large resolution gap between Terra MODIS (1 km) and Sentinel-2 (10 m) to enable more stable and accurate fusion.
-* A physically motivated weak supervision strategy that leverages 30 m Landsat-derived LST as proxy ground truth, to bypass the challenge of missing ground truth data at 10 m resolution.
-* A training design that avoids dependence on future observations by relying solely on a previous reference date, allowing real-time applicability.
-* A significant reduction in cloud-induced gaps at 10 m resolution by leveraging the temporal resilience of Terra MODIS observations.
-* Rigorous validation on both satellite-based and in-situ ground measurements, demonstrating WGAST’s superior accuracy, robustness, and generalization compared to existing spatio-temporal fusion methods.
+1. **The pretrained WGAST weights were never published.** So in this project I
+   **retrained WGAST from scratch myself, without any fine-tuning** against the
+   authors' checkpoint. My WGAST is therefore weaker than, and may differ from,
+   the model in the paper.
+2. **This codebase has been altered** from the original (added pipeline, renamed
+   files, fixes). It is **not** a faithful copy of the authors' release.
 
-## Paper
-Please refer to the arXiv [here](https://arxiv.org/abs/2508.06485) version for the full paper.
+If you want the real WGAST, go to the [original repo](https://github.com/Sofianebouaziz1/WGAST)
+and [paper](https://arxiv.org/abs/2508.06485) — not this fork.
+
+---
+
+## What I tried to do
+
+WGAST can only produce an LST map for **day-0**: it needs cloud-free satellite
+observations on the day you want a map for. That makes it useless for
+*forecasting* — you can't observe tomorrow's clear-sky satellite scene today.
+
+So I built a **secondary model that imitates WGAST**: a single neural network
+trained as a **WGAST surrogate**. It looks at what WGAST *would* have seen over
+the preceding days plus weather, and predicts the WGAST raster **one day ahead**,
+**without needing any satellite observation on the prediction day**.
+
+**Goal / use case:** a **day-ahead urban-heat-island warning at 10&nbsp;m**.
+A 10&nbsp;m map lets you flag the specific streets, blocks, and parks that will
+be hottest *tomorrow* — not just a citywide average.
+
+---
+
+## How it works (the short version)
+
+The trick is **distillation + a window shift**. Every clear-sky day where WGAST
+runs becomes a training example whose **target is WGAST's own output** for that
+day. The surrogate never sees the target day's satellite scene — only the
+**10 days before it**.
+
+```text
+TRAINING     features over d-10 .. d-1   ──►   WGAST raster on day d0
+INFERENCE    features over d-9  .. d0     ──►   predicted WGAST raster on day d+1
+```
+
+Because the offset between "last feature day" and "predicted day" is always **+1**,
+the model trained on the past works unchanged at inference time — and the
+prediction day (`d+1`) can be fully cloudy, since nothing is read from it.
+
+---
+
+## The secondary model
+
+> The notebooks and `.py` modules under `tutorials/` are the **source of truth**
+> for everything below; this section just describes what they do.
+
+### Inputs
+
+**Spatial branch — 91 channels at the WGAST 10&nbsp;m grid.** For each of the
+10 days in the window (`d-10 .. d-1`):
+
+- Sentinel-2 indices (3 bands: NDVI, NDWI, NDBI)
+- Landsat-8 indices (3 bands, the non-LST ones, upsampled to 10&nbsp;m)
+- a per-day **optical mask** (1 = valid pixel, 0 = cloudy / no acquisition)
+- the **past WGAST output** for that day (1 band; zeros if WGAST didn't run)
+- a per-day **WGAST mask** (1 if a WGAST output exists that day)
+
+→ `10 × (3 + 3 + 1 + 1 + 1) = 90` channels, plus **1 static DEM** channel = **91**.
+Missing/cloudy pixels are zero-filled; the mask channels tell the model what's
+real. Slot position encodes recency (the `d-1` slot is always in the same place).
+
+**Scalar branch (conditioning).** Fed into the bottleneck through a small MLP:
+
+- daily Open-Meteo weather (17 variables × 10 days)
+- a target-day weather **forecast** block (15 variables — at inference this is
+  the live `d+1` forecast)
+- season: `sin`/`cos` of the day-of-year
+- a region-level **elevation** scalar (mean DEM)
+
+**Deliberately excluded** so generalisation is by design: city id, climate zone,
+latitude/longitude, and raw MODIS/Landsat LST. The LST signal reaches the model
+**only** through WGAST's own past outputs.
+
+### Target
+
+The **real WGAST raster on day `d0`** — i.e. the surrogate is distilling WGAST,
+not predicting ground-truth temperature.
+
+### Architecture
+
+A **conditional U-Net** (`tutorials/model_unet.py`): 4-level encoder/decoder with
+skip connections, `GroupNorm`, and the scalar MLP concatenated at the bottleneck.
+The decoder outputs a single-channel 10&nbsp;m LST raster.
+
+### Training approach
+
+| Setting | Value |
+|---|---|
+| Loss | `L1 + 0.1·(1 − SSIM)` (`tutorials/losses.py`) |
+| Optimiser | AdamW, lr `1e-3`, cosine-annealing schedule |
+| Epochs | 50, checkpoint on **best validation L1** |
+| Augmentation | random **256×256 tiles** (same crop across all channels + target) |
+| Normalisation | per-channel z-score over *valid* pixels only; missing stays 0 |
+| Evaluation | run on the **full raster** (tiles only used for training) |
+
+### Splits — city-based, never random
+
+Cross-city generalisation *is* the claim, so validation and test are cities the
+model never trains on (`tutorials/cities.py::EXPERIMENT`):
+
+| Split | City | Why |
+|---|---|---|
+| **Train** | Istanbul + Orléans (2022) | fitting; Orléans is WGAST's own training city |
+| **Val** | Rome (Apr + Sep 2022) | checkpoint selection on an unseen city |
+| **Test** | Cairo (Apr + Sep 2022) | held-out desert-climate stress test |
+
+### Baselines & metrics
+
+The model has to beat **persistence** — "tomorrow's map = the most recent WGAST
+map in the window." Metrics are computed in physical LST units against the real
+WGAST raster: **RMSE, MAE, Bias, PSNR, SSIM**.
+
+---
+
+## Pipeline
+
+Per city, run in order (set the city switch at the top of each):
+
+| Step | File | Does |
+|---|---|---|
+| 1 | `tutorials/01s_get_training_days.ipynb` | download per-day MODIS/Landsat/Sentinel + DEM + weather |
+| 2 | `tutorials/02s_wgast_outputs.ipynb` | run WGAST on every clear-sky day → raster cache |
+| 3 | `tutorials/03s_build_dataset.ipynb` | assemble the 91-channel window samples + scalars, fit stats |
+| 4 | `tutorials/04s_train.ipynb` | train the conditional U-Net |
+| 5 | `tutorials/05s_evaluate.ipynb` | RMSE/MAE/Bias/PSNR/SSIM vs. persistence |
+| 6 | `tutorials/06s_compare_wgast_secondary.ipynb` | visual WGAST-vs-surrogate comparison |
+
+Library modules (imported by the notebooks): `cities.py`, `get_Opene_Meteo.py`
+(Open-Meteo client), `dataset.py`, `model_unet.py`, `losses.py`. All weather,
+forecasts, and sanity-checks come from **Open-Meteo** (Archive + Historical
+Forecast APIs).
+
+The original WGAST code it builds on is untouched in spirit and lives in
+`data_download/`, `data_preparation/`, `data_loader/`, `model/`, `runner/`, and
+tutorials `01_`–`04_`.
+
+---
+
+## Results
+
+Below: Orléans, 2022-03-06 — the 30&nbsp;m Landsat LST, WGAST's own 10&nbsp;m
+output, and my secondary model's 10&nbsp;m output side by side. The surrogate
+reproduces WGAST's fine spatial structure (the river, the warm built-up areas,
+the cool vegetated patches) well.
+
+![Secondary model vs WGAST — Orléans 2022-03-06](best_backup_performance.png)
+
+**Quantitatively, this is a quick first result, reported honestly.** On the
+held-out city (Rome, 27 days), the surrogate currently **ties the persistence
+baseline** (mean RMSE ≈ 5.06 LST units, essentially equal). In other words, it
+has learned to reproduce WGAST's spatial pattern but does not yet *beat* "just
+reuse the last map." See my notes below for why — and why I think there's a lot
+of headroom.
+
+---
+
+## My notes & future work
+
+This was a **quick test**, not a tuned system. Things I would do with more time:
+
+- **Invest much more in training.** I did essentially no hyperparameter search —
+  no sweeps on learning rate, schedule, loss weighting, or tile size.
+- **The model may be too big for the data I have.** With only a few dozen
+  clear-sky days per city, the U-Net is likely over-parameterised; a smaller
+  model (or much more data) would probably help.
+- **Try a longer feature time window.** The current 10-day window might be too
+  short to capture the relevant thermal/weather history; widening it could lift
+  accuracy.
+- **WGAST itself was retrained from scratch without fine-tuning** (the original
+  weights aren't published), so my target signal is imperfect. Better WGAST
+  targets would directly improve the surrogate.
+
+Overall I'm convinced the core idea is sound: with more time and tuning, this
+could become a genuine **local, day-ahead pre-heat warning** at street level for
+urban heat islands, built on top of WGAST.
+
+---
+
+## A note on AI assistance
+
+I used AI (Anthropic's Claude) **throughout this project**, mainly for the
+**coding** and for **designing the secondary model's architecture**. The research
+direction, goals, experiments, and all decisions are mine; the AI was a tool.
+
+---
 
 ## Requirements
-WGAST has been implemented and tested with the following versions: 
 
-- Python (v3.12.4).
-- Pytorch (v2.5.0).
-- Scipy (v1.14.1).
-- Earthengine-api (ee) (v1.1.2).
-- Geemap (v0.34.5).
-- NumPy (v2.0.1).
-- Pandas (v2.2.3).
-- Rasterio (v1.14.1).
-
-## Code structure
-
-```
-WGAST/
-├── data_download/ --- Scripts for downloading satellite data from Google Earth Engine
-│   ├── Landsat8Processor.py --- Download Landsat 8 data
-│   ├── MODISProcessor.py --- Download Terra MODIS data
-│   └── Sentinel2Processor.py --- Download Sentinel-2 data
-│
-├── data_loader/ --- Define the data loader structure and utilities
-│   ├── data.py --- Main data loader definition
-│   └── utils.py --- Helper functions for loading and processing
-│
-├── data_preparation/ --- Preprocessing and building Terra MODIS, Landsat 8, and Sentinel-2 triples
-│   ├── DataProcessor.py --- Clean and prepare raw satellite data
-│   └── GetTriple.py --- Create temporally aligned triples from processed data
-│
-├── model/ --- Define the WGAST model architecture
-│   └── WGAST.py --- Implementation of the WGAST deep learning model
-│
-├── runner/ --- Manage training and testing phases of the WGAST model
-│   └── experiment.py --- Train and test the model
-│
-└── tutorials/ --- A series of tutorials for each stage of the pipeline
-    ├── 01_data_download.ipynb --- Tutorial 01: Downloading satellite data from Google Earth Engine
-    ├── 02_data_preparation.ipynb --- Tutorial 02: Preprocessing and building data triples
-    ├── 03_data_structuring.ipynb --- Tutorial 03: Structuring and preparing datasets for training
-    └── 04_run_model.ipynb --- Tutorial 04: Running training and testing of WGAST
+```bash
+pip install -r requirements.txt
 ```
 
-## Experimental results
+PyTorch, rasterio, earthengine-api/geemap (data download), pandas + pyarrow,
+and the Open-Meteo client (`openmeteo-requests`). See `requirements.txt`.
 
-### Quantitative Assessment
+> Large artifacts (rasters, `.npz` samples, model checkpoints) are git-ignored —
+> they are all rebuildable by re-running the pipeline above.
 
-The following table summarizes the results we obtained by comparing WGAST with BicubicI, Ten-ST-GEE, and FuseTen, using multiple standard metrics across four different dates. These metrics include RMSE, SSIM, PSNR, SAM, CC, and ERGAS.
+---
 
-<div style="text-align:center;">
-  <img src="./images/Quantitative_results.png" width="100%"/>
-</div>
+## Contributors
 
-These results highlight the effectiveness of WGAST in achieving a strong trade-off between reducing reconstruction error and preserving quality. In most cases, WGAST outperforms prior approaches, particularly in RMSE, SSIM, PSNR, and ERGAS, validating its robustness and generalizability across diverse temporal scenes.
+- **Ichsan** — project, research direction, pipeline, training and evaluation.
+- **Claude (Anthropic)** — coding assistance and secondary-model architecture
+  design.
 
-### Qualitative Assessment
+Original WGAST model & method: **Sofiane Bouaziz, Adel Hafiane, Raphaël Canals,
+Rachid Nedjai**.
 
-The following figure presents a qualitative comparison between WGAST and FuseTen across six representative regions. Each row includes a high-resolution satellite view, the Terra MODIS LST, the Landsat 8 LST reference, the prediction from FuseTen, and the prediction from WGAST. The selected regions span a variety of landscapes, including urban, semi-urban, industrial, and vegetated environments.
+---
 
-<div style="text-align:center;">
-  <img src="./images/Qualitative_results.jpg" width="100%"/>
-</div>
+## How to cite WGAST
 
-WGAST consistently produces more physically coherent and realistic LST outputs. It better captures fine spatial details, preserves thermal gradients, and reconstructs high-resolution daily 10 m LST outputs that even surpass the quality of the 30 m Landsat 8 reference, all from only coarse 1 km Terra MODIS input.
+If you use WGAST in your research, please cite the original authors:
 
-
-### Spatio-Temporal Generalization
-WGAST is not limited to a single region, it generalizes globally. We tested it on six additional regions across diverse climates and geographies: Tours and Montpellier (France), Madrid (Spain), Rome (Italy), Cairo (Egypt), and Istanbul (Turkey).
-
-<div style="text-align:center;">
-  <img src="./images/new_roi.png" width="100%"/>
-</div>
-
-
-## Authors 
-
-WGAST has been developed by Sofiane Bouaziz, Adel Hafiane, Raphaël Canals and Rachid Nedjai.
-
-You can contact us by opening a new issue in the repository.
-
-## How to cite?
-In case you are using WGAST for your research, please consider citing our work:
-
-```
+```bibtex
 @article{bouaziz2025wgast,
   title={WGAST: Weakly-Supervised Generative Network for Daily 10 m Land Surface Temperature Estimation via Spatio-Temporal Fusion},
   author={Bouaziz, Sofiane and Hafiane, Adel and Canals, Rapha{\"e}l and Nedjai, Rachid},

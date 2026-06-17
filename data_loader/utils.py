@@ -65,6 +65,10 @@ def save_checkpoint(model, optimizer, path):
 def load_checkpoint(checkpoint, model, optimizer=None, map_location=None):
     if not checkpoint.exists():
         raise FileNotFoundError(f"File doesn't exist {checkpoint}")
+    # Checkpoints saved on a CUDA box can't be deserialised on a CPU-only
+    # machine unless storages are remapped; default to the available device.
+    if map_location is None:
+        map_location = 'cuda' if torch.cuda.is_available() else 'cpu'
     state = torch.load(checkpoint, map_location=map_location)
     if isinstance(model, nn.DataParallel):
         model = model.module
