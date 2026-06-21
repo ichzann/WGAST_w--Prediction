@@ -183,6 +183,12 @@ the cool vegetated patches) well.
 
 ![Secondary model vs WGAST — Orléans 2022-03-06](best_backup_performance.png)
 
+
+
+Here is the best holdout performance based on Cairo, which has much different climate compared to traning cities. Which shows, that the approach with the secondery model could pottentially also generelise well, just like WGAST itself. 
+
+![Holdout Cairo](best_backup__holdout_performance.png)
+
 **Quantitatively, this is a quick first result, reported honestly.** On the
 held-out city (Rome, 27 days), the surrogate currently **ties the persistence
 baseline** (mean RMSE ≈ 5.06 LST units, essentially equal). In other words, it
