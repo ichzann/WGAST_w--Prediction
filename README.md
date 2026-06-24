@@ -57,7 +57,7 @@ the preceding days plus weather, and predicts the WGAST raster **one day ahead**
 A 10&nbsp;m map lets you flag the specific streets, blocks, and parks that will
 be hottest *tomorrow* — not just a citywide average.
 
-[Model Weights](https://huggingface.co/ichzann/WGAST-Forecaster/blob/main/best_backup.pt)
+[WGAST-Forecaster Model Weights (! Not the Original WGAST)](https://huggingface.co/ichzann/WGAST-Forecaster/blob/main/best_backup.pt)
 
 ---
 
