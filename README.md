@@ -16,6 +16,31 @@
 
 ---
 
+
+## Results
+
+Below: Orléans, 2022-03-06 — the 30&nbsp;m Landsat LST, WGAST's own 10&nbsp;m
+output, and my secondary model's 10&nbsp;m output side by side. The surrogate
+reproduces WGAST's fine spatial structure (the river, the warm built-up areas,
+the cool vegetated patches) well.
+
+![Secondary model vs WGAST — Orléans 2022-03-06](best_backup_performance.png)
+
+
+
+Here is the best holdout performance based on Cairo, which has much different climate compared to traning cities. Which shows, that the approach with the secondery model could pottentially also generelise well, just like WGAST itself. 
+
+![Holdout Cairo](best_backup__holdout_performance.png)
+
+**Quantitatively, this is a quick first result, reported honestly.** On the
+held-out city (Rome, 27 days), the surrogate currently **ties the persistence
+baseline** (mean RMSE ≈ 5.06 LST units, essentially equal). In other words, it
+has learned to reproduce WGAST's spatial pattern but does not yet *beat* "just
+reuse the last map." See my notes below for why — and why I think there's a lot
+of headroom.
+
+---
+
 ## Attribution — original WGAST
 
 **WGAST** — *Weakly-Supervised Generative Network for Daily 10&nbsp;m Land Surface
@@ -176,29 +201,7 @@ tutorials `01_`–`04_`.
 
 ---
 
-## Results
 
-Below: Orléans, 2022-03-06 — the 30&nbsp;m Landsat LST, WGAST's own 10&nbsp;m
-output, and my secondary model's 10&nbsp;m output side by side. The surrogate
-reproduces WGAST's fine spatial structure (the river, the warm built-up areas,
-the cool vegetated patches) well.
-
-![Secondary model vs WGAST — Orléans 2022-03-06](best_backup_performance.png)
-
-
-
-Here is the best holdout performance based on Cairo, which has much different climate compared to traning cities. Which shows, that the approach with the secondery model could pottentially also generelise well, just like WGAST itself. 
-
-![Holdout Cairo](best_backup__holdout_performance.png)
-
-**Quantitatively, this is a quick first result, reported honestly.** On the
-held-out city (Rome, 27 days), the surrogate currently **ties the persistence
-baseline** (mean RMSE ≈ 5.06 LST units, essentially equal). In other words, it
-has learned to reproduce WGAST's spatial pattern but does not yet *beat* "just
-reuse the last map." See my notes below for why — and why I think there's a lot
-of headroom.
-
----
 
 ## My notes & future work
 
